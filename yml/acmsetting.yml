@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  SystemName:
+    Type: String
+    Default: mysystem
+  DomainName:
+    Type: String
+    Default: devstatic
+  HostedZone:
+    Type: String
+    Default: ZXXXXXXXXXXX
+Resources:
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZone
+      SubjectAlternativeNames: 
+        - !Sub '*.${DomainName}'
+      ValidationMethod: DNS
+Outputs:
+  ACMCertificateARN:
+    Value: !Ref Certificate
+    Export:
+      Name: !Sub ${SystemName}-CertificateARN
+

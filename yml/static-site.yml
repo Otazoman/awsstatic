@@ -1,0 +1,132 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "aws static site cloudfront and s3"
+Parameters:
+  SystemName:
+    Type: String
+    Default: mysystem
+  HostDomain:
+    Type: String
+    Default: sample.com
+  HostedZoneID:
+    Type: String
+    Default: Z2FDTNDATAQYW2
+  ACMCertificate:
+    Type: String
+    Default: arn:aws:acm:us-east-1:XXXXXXXXXXXX:certificate/XXXXXXXX
+Resources:
+  S3BucketLogs:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${SystemName}-${HostDomain}-logs
+      AccessControl: LogDeliveryWrite
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  S3BucketWebStatic:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${SystemName}-${HostDomain}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3BucketLogs
+        LogFilePrefix: 'origin/'
+  BucketPolicyWebStatic:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3BucketWebStatic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - s3:GetObject
+            Effect: Allow
+            Resource: !Sub '${S3BucketWebStatic.Arn}/*'
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: "CloudFront OAI for Static Web Site"
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Aliases: 
+          - !Sub ${HostDomain}
+          - !Sub www.${HostDomain}
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 10
+            ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /404.html
+        DefaultCacheBehavior:
+          Compress: true
+          DefaultTTL: 0
+          ForwardedValues:
+            QueryString: true
+          MaxTTL: 0
+          MinTTL: 0
+          TargetOriginId: 'WebStatic-S3'
+          # httpの通信はhttpsにリダイレクトする
+          ViewerProtocolPolicy: 'redirect-to-https'
+        Enabled: true
+        HttpVersion: 'http2'
+        DefaultRootObject: 'index.html'
+        IPV6Enabled: true
+        Logging:
+          Bucket: !GetAtt S3BucketLogs.DomainName
+          IncludeCookies: false
+          Prefix: 'cdn/'
+        Origins:
+          # 作成直後にStatusCode 307とならないように、Region指定の方式
+          # https://aws.amazon.com/jp/premiumsupport/knowledge-center/s3-http-307-response/
+          - DomainName: !Join ["", [!Ref S3BucketWebStatic, !Sub ".s3-${AWS::Region}.amazonaws.com"]]
+            Id: 'WebStatic-S3'
+            S3OriginConfig:
+              OriginAccessIdentity:
+                !Join ['', ['origin-access-identity/cloudfront/', !Ref CloudFrontOriginAccessIdentity]]
+        PriceClass: 'PriceClass_All'
+        ViewerCertificate:
+          SslSupportMethod: sni-only
+          AcmCertificateArn: !Ref ACMCertificate
+  ZoneApexRecord:
+    Type: 'AWS::Route53::RecordSetGroup'
+    Properties:
+      HostedZoneName: !Sub "${HostDomain}."
+      RecordSets:
+        - Name: !Ref HostDomain
+          Type: A
+          AliasTarget:
+            HostedZoneId: !Ref HostedZoneID
+            DNSName: !GetAtt CloudFrontDistribution.DomainName
+  HostRecord:
+    Type: 'AWS::Route53::RecordSetGroup'
+    Properties:
+      HostedZoneName: !Sub "${HostDomain}."
+      RecordSets:
+        - Name: !Sub www.${HostDomain}
+          Type: A
+          AliasTarget:
+            HostedZoneId: !Ref HostedZoneID
+            DNSName: !GetAtt CloudFrontDistribution.DomainName
+Outputs:
+  S3BucketLogsName:
+    Description: "S3 Bucket for keeping access logs."
+    Value: !Ref S3BucketLogs
+  S3BucketWebStaticName:
+    Description: "S3 Bucket for deploying static site."
+    Value: !Ref S3BucketWebStatic
+  CloudFrontDomainName:
+    Description: "CloudFront DomainName."
+    Value: !GetAtt  CloudFrontDistribution.DomainName
+  ZoneApexRecordName:
+    Description: "Route53 ZoneApex RecordSet."
+    Value: !Ref ZoneApexRecord
+  HostRecordName:
+    Description: "Route53 Host RecordSet."
+    Value: !Ref HostRecord
